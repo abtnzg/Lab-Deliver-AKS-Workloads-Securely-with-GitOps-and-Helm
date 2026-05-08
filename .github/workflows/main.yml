@@ -1,0 +1,166 @@
+name: Build and Release
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - 'charts/simple-grocery-store/values/**'
+
+jobs:
+  build-and-push:
+    permissions:
+      id-token: write # Required write permission to Fetch an OIDC token
+      contents: read # Read permission to access the repository contents
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    - name: Azure login
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    - name: Azure CLI script
+      uses: azure/cli@v2
+      with:
+        azcliversion: latest
+        inlineScript: |
+          # Set required variables
+          RG=$(az group list --query [].name --output tsv)
+          ACR=$(az acr list --resource-group $RG --query [].name --output tsv)
+          cd frontend
+          az acr build --registry "$ACR" --image "frontend:${GITHUB_RUN_NUMBER}" .
+          cd ../services/cart-service
+          az acr build --registry "$ACR" --image "cart-service:${GITHUB_RUN_NUMBER}" .
+          cd ../product-service
+          az acr build --registry "$ACR" --image "product-service:${GITHUB_RUN_NUMBER}" .
+          
+  release-and-test-staging:
+    needs: build-and-push
+    permissions:
+      id-token: write # Required write permission to Fetch an OIDC token
+      contents: write # Write permission to access the repository contents
+      issues: write # Write permission to access the repository issues
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      POLL_INTERVAL: 60 # Number of times to poll for an updated image in seconds
+      MAX_ATTEMPTS: 20 # Number attempts to wait for an image update, should be greater than Flux poll interval
+    steps:
+
+    - name: Azure login
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        
+    - name: Kubectl tool installer
+      uses: Azure/setup-kubectl@v4.0.0
+
+    - name: Configure AKS Credentials
+      run: |
+          RG=$(az group list --query [].name --output tsv)
+          AKS=$(az aks list --resource-group $RG --query [].name --output tsv)
+          az aks get-credentials --resource-group $RG --name $AKS --overwrite-existing
+    
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Update Helm Release tags
+      run: |
+        sed -E "/frontend:/,/tag:/ s/(tag: ).*/\1${GITHUB_RUN_NUMBER}/" -i charts/simple-grocery-store/values/staging.yaml
+        sed -E "/cartService:/,/tag:/ s/(tag: ).*/\1${GITHUB_RUN_NUMBER}/" -i charts/simple-grocery-store/values/staging.yaml
+        sed -E "/productService:/,/tag:/ s/(tag: ).*/\1${GITHUB_RUN_NUMBER}/" -i charts/simple-grocery-store/values/staging.yaml
+        git config --global user.name "GitHub Action"
+        git config --global user.email "action@github.com"
+        git add charts/simple-grocery-store/values/staging.yaml
+        git commit -m "Update HelmRelease image tags to ${GITHUB_RUN_NUMBER}"
+        git fetch origin
+        git rebase origin/main
+        git push
+
+    - name: Wait for Image Tag to Match Run Number
+      run: |
+          TARGET_TAG="${{ github.run_number }}"
+          echo "Polling for Deployment spec tag to match '$TARGET_TAG'..."
+          attempt=0
+          while [ $attempt -lt ${{ env.MAX_ATTEMPTS }} ]; do
+            FULL_IMAGE_SPEC=$(kubectl get deployment frontend-deployment -n staging -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)
+            CURRENT_TAG="${FULL_IMAGE_SPEC##*:}"
+            
+            if [ -z "$FULL_IMAGE_SPEC" ]; then
+              echo "Attempt $attempt/${{ env.MAX_ATTEMPTS }}: Deployment spec not retrievable. Retrying..."
+            elif [ "$CURRENT_TAG" = "$TARGET_TAG" ]; then
+              echo "Match found: Image tag is '$CURRENT_TAG'."
+              exit 0
+            else
+              echo "Attempt $attempt/${{ env.MAX_ATTEMPTS }}: Current tag is '$CURRENT_TAG'. Retrying in ${{ env.POLL_INTERVAL }} seconds..."
+            fi
+            
+            attempt=$((attempt + 1))
+            sleep ${{ env.POLL_INTERVAL }}
+          done
+          
+          echo "Timeout: Tag did not match '$TARGET_TAG' after $(( ${{ env.POLL_INTERVAL }} * ${{ env.MAX_ATTEMPTS }} )) seconds."
+          exit 1
+
+    - name: Retrieve Load Balancer IP
+      id: get-ip
+      run: |
+          IP=$(kubectl get service frontend-service -n staging -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          if [[ -z "$IP" ]]; then
+            echo "Error: IP not available."
+            exit 1
+          fi
+          echo "IP retrieved: $IP"
+          echo "ip=$IP" >> $GITHUB_OUTPUT
+          TARGET_URL="http://$IP"  # Adjust protocol/port as needed (e.g., http if not HTTP)
+          echo "target_url=$TARGET_URL" >> $GITHUB_OUTPUT
+          
+    - name: ZAP Scan
+      if: steps.get-ip.outputs.ip != ''
+      uses: zaproxy/action-baseline@v0.14.0
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        target: ${{ steps.get-ip.outputs.target_url }}
+
+  release-production:
+    needs: release-and-test-staging
+    permissions:
+      id-token: write # Required write permission to Fetch an OIDC token
+      contents: write # Write permission to access the repository contents
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+    - name: Azure login
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        
+    - name: Kubectl tool installer
+      uses: Azure/setup-kubectl@v4.0.0
+      
+    - name: Configure AKS Credentials
+      run: |
+          RG=$(az group list --query [].name --output tsv)
+          AKS=$(az aks list --resource-group $RG --query [].name --output tsv)
+          az aks get-credentials --resource-group $RG --name $AKS --overwrite-existing
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Update Helm Release tags
+      run: |
+        sed -E "/frontend:/,/tag:/ s/(tag: ).*/\1${GITHUB_RUN_NUMBER}/" -i charts/simple-grocery-store/values/production.yaml
+        sed -E "/cartService:/,/tag:/ s/(tag: ).*/\1${GITHUB_RUN_NUMBER}/" -i charts/simple-grocery-store/values/production.yaml
+        sed -E "/productService:/,/tag:/ s/(tag: ).*/\1${GITHUB_RUN_NUMBER}/" -i charts/simple-grocery-store/values/production.yaml
+        git config --global user.name "GitHub Action"
+        git config --global user.email "action@github.com"
+        git add charts/simple-grocery-store/values/production.yaml
+        git commit -m "Update HelmRelease image tags to ${GITHUB_RUN_NUMBER}"
+        git fetch origin
+        git rebase origin/main
+        git push
