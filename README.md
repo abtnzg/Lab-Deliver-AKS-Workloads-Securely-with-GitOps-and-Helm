@@ -1,11 +1,11 @@
-Introduction
+# Introduction
 In this Hands-on lab, you will learn how to deliver AKS workloads securely using GitOps and Helm. You will set up a GitHub repository, configure GitHub Actions for CI/CD, and deploy applications to an AKS cluster using ArgoCD and Helm charts.
 
-Log in to the Azure portal
+# Log in to the Azure portal
 Log in to the Azure portal using the credentials provided on the lab page. Be sure to use an incognito or private browser window to ensure you're using the lab account, rather than your own.
 
-Fork and Configure Github Repository
-Fork the repository for the Hands-on lab
+# Fork and Configure Github Repository
+## Fork the repository for the Hands-on lab
 Sign into GitHub using your personal GitHub account.
 
 Go to the repository for this Hands-on lab: https://github.com/pluralsight-cloud/Lab-Deliver-AKS-Workloads-Securely-with-GitOps-and-Helm
@@ -18,25 +18,25 @@ Note your GitHub username in the Owner field and the Repository name for later.
 
 Click Create Fork.
 
-Enable Issues in the Forked Repository
+## Enable Issues in the Forked Repository
 Under your repository name, click Settings.
 
 Under Features, select the checkbox next to Issues.
 
-Create Staging Environment
+## Create Staging Environment
 Still on the Settings tab.
 In the left menu, under the Code and Automation heading, select Environments.
 Click New environment.
 Provide the name staging and click Configure environment.
-Create Production Environment
+## Create Production Environment
 Select Environments in the breadcrumbs to return to the list of environments.
 Click New environment.
 Provide the name production and click Configure environment.
 Click the checkbox next to Required reviewers.
 In the text box under Add up to 6 more reviewers, type your GitHub username and select it from the dropdown list.
 Click Save protection rules.
-Install and Configure ArgoCD
-Install ArgoCD
+# Install and Configure ArgoCD
+## Install ArgoCD
 Go to the Azure Portal.
 
 Open Cloud Shell by selecting the icon in the top menu.
@@ -60,7 +60,7 @@ kubectl create namespace argocd
 kubectl create -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
 Wait for the resources to be created.
 
-Create an ArgoCD Application
+## Create an ArgoCD Application
 Set a variable for your forked repository URL:
 
 Important Note: Before applying the applications, make sure your GitHub repository URL is correct and replace the placeholder values. This is the source ArgoCD uses to sync your manifests. If this value is incorrect, ArgoCD will not be able to retrieve your application manifests, and your workloads may not deploy as expected.
@@ -136,7 +136,7 @@ Confirm with the following command:
 kubectl get application --namespace argocd
 Note: The applications will remain out of sync for now, as GitHub hasn't pushed the images to the registry yet.
 
-Configure CI/CD pipeline using Workload Identity Federation and GitHub Actions
+# Configure CI/CD pipeline using Workload Identity Federation and GitHub Actions
 Create Federated Credentials
 Minimize Cloud Shell
 
@@ -180,7 +180,7 @@ In the left menu, go to Overview page of the User-assigned managed identity.
 
 Copy the values for Client ID and Subscription ID to use later.
 
-Create GitHub Secrets
+## Create GitHub Secrets
 In the GitHub Repository, go to Settings.
 
 In the left menu, under the Security and quality heading, select Secrets and variables > Actions.
@@ -194,7 +194,7 @@ AZURE_SUBSCRIPTION_ID: The Subscription ID of the Azure subscription
 AZURE_TENANT_ID: The Directory (tenant) ID of the Azure AD tenant
 Note: These secrets will be used by the Azure Login Action in the GitHub actions workflow.
 
-Set up GitHub Actions Workflows
+## Set up GitHub Actions Workflows
 Click the Actions tab in the GitHub Repository.
 
 Select the link to set up a workflow yourself.
@@ -375,7 +375,7 @@ Provide a commit message if required. For example, Add CI/CD workflow for build 
 
 Click Commit changes
 
-Review the Issues and Release to Production
+## Review the Issues and Release to Production
 Click the Actions tab in the GitHub Repository.
 
 Select the latest workflow run.
@@ -398,5 +398,5 @@ Select the checkbox next to production.
 
 Click Approve and deploy.
 
-Conclusion
+# Conclusion
 Congratulations — you've completed this hands-on lab!# Deliver AKS Workloads Securely with GitOps and Helm
